@@ -5,6 +5,8 @@
 // @description  Completa SOLO los campos que falten en Captura > Órdenes de pago de Qintek, después de que subas el XML de la factura. Busca la orden a clonar por número de folio dentro del Excel que pegues. Nunca presiona "Guardar".
 // @match        https://qintek.qin.mx/crud/capturar/ordenesdepago*
 // @grant        GM_registerMenuCommand
+// @updateURL    https://raw.githubusercontent.com/jmoreno-alt/qintek-tampermonkey-scripts/main/qintek-autocompletar-ordenes-pago.user.js
+// @downloadURL  https://raw.githubusercontent.com/jmoreno-alt/qintek-tampermonkey-scripts/main/qintek-autocompletar-ordenes-pago.user.js
 // ==/UserScript==
 
 /*
@@ -429,7 +431,7 @@
     return h
       .toLowerCase()
       .normalize('NFD')
-      .replace(/[̀-ͯ]/g, '')
+      .replace(/[\u0300-\u036f]/g, '')
       .replace(/[^a-z0-9]+/g, '');
   }
 
