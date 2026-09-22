@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Qintek - Autocompletar Orden de Pago (Duplicar)
 // @namespace    qintek-pmo-automation
-// @version      2.4
+// @version      2.8
 // @description  Completa SOLO los campos que falten en Captura > Órdenes de pago de Qintek, después de que subas el XML de la factura. Busca la orden a clonar por número de folio dentro del Excel que pegues. Nunca presiona "Guardar".
 // @match        https://qintek.qin.mx/crud/capturar/ordenesdepago*
 // @grant        GM_registerMenuCommand
@@ -58,17 +58,24 @@
   - Si Qintek no logró resolver el Proveedor desde el XML y el Excel solo tiene la CLABE
     (sin nombre), el script tampoco puede adivinarlo: el catálogo de Qintek no muestra la
     CLABE en pantalla, solo el nombre. Escríbelo a mano en el campo "Proveedor" del panel.
-  - Si un mismo nombre de Centro de Costos existe repetido en más de un tipo (por ejemplo
-    "Mantenimiento" como Departamento Y como Sucursal), el script no adivina cuál es:
-    lo deja marcado como ⚠️ para que lo agregues tú manualmente.
+  - Si un mismo nombre de Centro de Costos existe repetido en más de un tipo, la regla
+    (acordada, v2.7) es: si "Planta" es una de las opciones, se usa Planta
+    automáticamente (ej. "Om Ah Hum" existe en Sucursales y Planta → se usa Planta).
+    Si la ambigüedad NO incluye Planta (por ejemplo "Mantenimiento" como Departamento Y
+    como Sucursal), el script no adivina cuál es: lo deja marcado como ⚠️ para que lo
+    agregues tú manualmente.
   - El formato de fecha esperado (para el respaldo de "Fecha factura", si el XML no la
     trajo) es día/mes/año, como lo exporta Qintek (ej. "15/9/2026, 12:21:34 p.m.").
-  - Si una misma orden trae Centro de Costos de los 3 tipos a la vez (Departamentos +
-    Sucursales + Planta), los del primer tipo que se procesó se pueden perder al llegar
-    al último tipo (Qintek borra la selección de "Centro costos" del tipo que se va
-    desmarcando). Si tu orden mezcla los 3 tipos, revisa el resultado final antes de
-    guardar y agrega a mano lo que haga falta. Cuando son 1 o 2 tipos distintos (el caso
-    más común), no hay problema.
+  - Si una misma orden trae Centro de Costos de los 3 tipos A LA VEZ (Departamentos +
+    Sucursales + Planta simultáneamente), los del primer tipo que se procesó se pueden
+    perder al llegar al último tipo (Qintek borra la selección de "Centro costos" del
+    tipo que se va desmarcando, y marcar los 3 tipos a la vez dispara el comportamiento
+    especial "-TODOS-" de Qintek, así que no se pueden dejar los 3 marcados al mismo
+    tiempo). Si tu orden mezcla los 3 tipos, revisa el resultado final antes de guardar
+    y agrega a mano lo que haga falta. Cuando son 1 o 2 tipos distintos (el caso más
+    común, incluso con muchas líneas alternando entre ambos), el script marca de una
+    vez los tipos que va a necesitar y los deja marcados durante todo el proceso, así
+    que no hay pérdida de datos (corregido en v2.5).
   - El script decide "¿ya está lleno?" leyendo lo que se ve en pantalla en cada campo en
     el momento de dar clic en el botón. Si subes el XML DESPUÉS de correr el script, vas
     a ver que rellenó campos que el XML iba a llenar de todos modos: en ese caso, vuelve a
@@ -188,6 +195,83 @@
     "Centro (Sucursales)", con su sufijo de tipo) y se busca su input de monto por
     coincidencia EXACTA primero; "empieza con" solo se usa como respaldo (por ejemplo
     para las filas de Concepto, que no llevan sufijo de tipo).
+
+  CAMBIOS v2.5 (bug real, visto en vivo — 24 Centro de Costos mezclando 2 tipos)
+  - Probando con una orden real de 24 líneas de Centro de Costos que alternaban todo
+    el tiempo entre Departamentos y Sucursales (no en bloques, sino mezcladas en el
+    orden del Excel), el formulario terminó con UN SOLO Centro de Costos marcado (el
+    último de la lista) y el resto perdido — a pesar de que v2.3/v2.4 ya evitaban
+    "cero tipos marcados". Causa real: la limitación que hasta ahora se creía exclusiva
+    de mezclar los 3 tipos a la vez también aplica cada vez que el script CAMBIA de un
+    tipo a otro en cualquier momento del proceso (no solo al final): al desmarcar el
+    tipo anterior para marcar el siguiente, Qintek borra TODOS los Centro de Costos ya
+    agregados que pertenecían a ese tipo que se está desmarcando — no solo cuando se
+    llega a cero tipos. Como esta orden iba cambiando de tipo en casi cada línea, cada
+    cambio borraba lo ya avanzado, y solo sobrevivió lo agregado después del último
+    cambio.
+  - Corregido de raíz: ahora el script primero resuelve a qué tipo pertenece CADA línea
+    (usando el mismo catálogo de siempre) y arma el conjunto de tipos realmente
+    necesarios ANTES de tocar nada. Si son 1 o 2 tipos (lo normal, sin importar cuántas
+    líneas o en qué orden vengan mezcladas), los marca TODOS de una sola vez al
+    principio y ya no los vuelve a tocar durante el resto del proceso — así nunca se
+    dispara el borrado por cambio de tipo. Solo si de verdad se necesitan los 3 tipos
+    a la vez (Departamentos + Sucursales + Planta) se usa el método anterior
+    (secuencial, con la pérdida conocida del primer tipo procesado), porque marcar los
+    3 al mismo tiempo activa el comportamiento especial "-TODOS-" de Qintek y no se
+    puede evitar de otra forma. En ese caso el script ahora avisa explícitamente en el
+    resumen antes de empezar.
+
+  CAMBIOS v2.6 (dos bugs reales, vistos en vivo — orden de 24 líneas mezclando
+  Departamentos, Sucursales y Planta)
+  - Bug 1: TODAS las líneas de "Sucursales" (14 de 24) se reportaron como "no
+    encontré ... en Departamentos, Sucursales ni Planta", aunque sí existían en
+    Qintek. Causa: al construir el catálogo de Centro de Costos por tipo, el script
+    abría el panel y leía sus opciones casi de inmediato — pero las opciones tardan
+    en llegar, sobre todo en catálogos largos como "Sucursales" (con más ramas que
+    "Departamentos" o "Planta"). El catálogo de Sucursales se leyó vacío o
+    incompleto, así que ninguna línea de ese tipo pudo resolverse. Corregido: ahora
+    se espera a que el número de opciones del panel se "estabilice" (deje de crecer)
+    antes de leerlas, tanto al construir el catálogo como al reabrir el panel para
+    seleccionar cada línea.
+  - Bug 2: de los Centro de Costos que SÍ se lograron agregar, a los primeros de la
+    lista no se les pudo llenar el monto ("no encontré el campo de monto"), mientras
+    que a los últimos agregados sí. Causa probable: la lista de filas en pantalla no
+    mantiene renderizadas todas las filas ya agregadas cuando hay muchas — por eso
+    fallaban las más antiguas. Corregido: ya no se agregan primero TODAS las líneas y
+    se rellenan los montos hasta el final; ahora cada línea se agrega Y se le llena
+    el monto de inmediato, una por una, mientras su fila recién creada sigue
+    garantizada en el DOM.
+  - Además: se subieron de 4 a 6 los reintentos para abrir cualquier panel de
+    dropdown/multiselect (con más espera entre cada uno), porque también se vio en
+    vivo que "Empresa Pagadora" —el primer campo que toca el script en cada
+    corrida— a veces no alcanzaba a abrir su panel a tiempo.
+
+  CAMBIOS v2.7 (regla acordada con el usuario)
+  - Al corregir el bug del catálogo de Sucursales en v2.6, salió a la luz un caso real
+    de ambigüedad: "Om Ah Hum" existe tanto en Sucursales como en Planta, así que el
+    script lo marcaba como ⚠️ para agregarlo manualmente. El usuario pidió que, en ese
+    tipo de ambigüedad, se prefiera "Planta". Ahora: si un nombre existe en más de un
+    tipo y "Planta" es una de las opciones, el script usa Planta automáticamente (y lo
+    deja anotado en el resumen). Si la ambigüedad no incluye Planta, se mantiene el
+    comportamiento anterior (⚠️, agregar a mano), porque no hay una regla definida para
+    esos casos.
+
+  CAMBIOS v2.8 (bug real, visto en vivo — la regla de v2.7 podía arruinar TODO el lote)
+  - Al probar v2.7 con la orden real de 24 líneas (que solo necesitaba Departamentos +
+    Sucursales — el caso seguro de 2 tipos), la ambigüedad de "Om Ah Hum" se resolvió a
+    Planta como se pidió, pero eso hizo que el lote pasara a necesitar 3 tipos a la vez
+    — y ahí sí aplica la limitación grave de Qintek (cada cambio de tipo borra lo ya
+    agregado del tipo que se desmarca), poniendo en riesgo TODAS las 24 líneas, no solo
+    la ambigua. El resumen mostraba ✅ en todas (porque se registra el clic al
+    momento), pero el formulario real probablemente terminó con solo una fracción de
+    las líneas.
+  - Corregido: la preferencia por "Planta" ahora solo se aplica cuando NO implica abrir
+    un tercer tipo en el lote (o sea, cuando Planta ya era necesaria de todos modos, o
+    el lote de por sí solo necesitaba 1 tipo más). Si forzar Planta abriría un tercer
+    tipo, el script en su lugar usa el otro tipo de la ambigüedad si ya era necesario
+    (evitando el riesgo por completo), o —si ni eso alcanza— lo deja para agregarse a
+    mano, avisando explícitamente que se evitó a propósito para no arriesgar el resto
+    del lote.
 */
 
 (function () {
@@ -297,16 +381,40 @@
   // abrir el overlay (animación/lag), así que probamos varias veces con más
   // espera cada vez antes de rendirnos. Siempre purga paneles viejos primero
   // y elige el panel alineado con el control correcto (ver nota arriba).
-  async function openFieldPanel(labelText, attempts = 4) {
+  // v2.6: se subió de 4 a 6 intentos y se alargó la espera de cada uno — se vio en vivo
+  // que "Empresa Pagadora" (el primer campo que toca el script en cada corrida) a veces
+  // no alcanza a abrir su panel con el límite anterior, probablemente porque Qintek
+  // todavía está terminando de asentarse justo después de procesar el XML.
+  async function openFieldPanel(labelText, attempts = 6) {
     const trigger = getTrigger(labelText);
     purgeStalePanels();
     for (let i = 0; i < attempts; i++) {
       trigger.click();
-      await sleep(400 + i * 300);
+      await sleep(450 + i * 300);
       const panel = findPanelNearTrigger(trigger);
       if (panel) return panel;
     }
     return null;
+  }
+
+  // v2.6 (bug real, visto en vivo — catálogo de "Sucursales" vacío): al construir el
+  // catálogo de Centro de Costos por tipo, el panel aparecía en el DOM casi de
+  // inmediato pero sus opciones (<li>) seguían llegando unos cientos de milisegundos
+  // después — sobre todo para catálogos largos como "Sucursales", que tiene muchas más
+  // opciones que "Departamentos" o "Planta". El código anterior leía las opciones justo
+  // al abrir el panel y a veces se quedaba con una lista vacía o incompleta para ese
+  // tipo, lo que hacía fallar TODAS las líneas de Centro de Costos de ese tipo (se
+  // reportaban como "no encontrado en Departamentos, Sucursales ni Planta" aunque sí
+  // existieran). Ahora se espera a que el número de opciones se "estabilice" (deje de
+  // crecer entre una revisión y la siguiente) antes de leerlas.
+  async function waitForStableOptions(panel, stepMs = 200, maxAttempts = 8) {
+    let prevCount = -1;
+    for (let i = 0; i < maxAttempts; i++) {
+      const count = panel.querySelectorAll('li').length;
+      if (count > 0 && count === prevCount) return;
+      prevCount = count;
+      await sleep(stepMs);
+    }
   }
 
   // Selecciona UNA opción por texto (sirve tanto para dropdown simple como
@@ -431,7 +539,7 @@
     return h
       .toLowerCase()
       .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[̀-ͯ]/g, '')
       .replace(/[^a-z0-9]+/g, '');
   }
 
@@ -654,16 +762,14 @@
 
     // 8. Centro de Costos — no viene en el XML de la factura, siempre se llena con
     //    el Excel. IMPORTANTE: "Tipo Centro costos" es en realidad un MULTISELECT, no
-    //    un dropdown de una sola opción. Eso trajo dos bugs seguidos:
-    //      v1.0: usábamos la opción "-TODOS-", que Qintek interpreta como
-    //            "selecciona automáticamente TODOS los centros de costo".
-    //      v1.1: al revisar Departamentos, Sucursales y Planta uno tras otro,
-    //            cada clic SUMABA esa opción a las anteriores (por ser
-    //            multiselect) en vez de reemplazarla — así que terminábamos
-    //            otra vez con los 3 tipos marcados a la vez (y Qintek, al ver
-    //            los 3 marcados, prendía también "-TODOS-" solo).
-    //    v1.2 corrige esto desmarcando cada tipo justo después de leer su
-    //    catálogo, para que en todo momento haya como máximo un tipo marcado.
+    //    un dropdown de una sola opción. Eso trajo varios bugs seguidos (ver CAMBIOS
+    //    v1.1, v1.2, v2.2, v2.3, v2.4 arriba). El más reciente y más importante (v2.5):
+    //    CADA VEZ que el script cambia de un tipo a otro —no solo al llegar a cero
+    //    tipos marcados— Qintek borra los Centro de Costos ya agregados que pertenecían
+    //    al tipo que se está desmarcando. Por eso ahora, en vez de ir cambiando de tipo
+    //    sobre la marcha según aparecen las líneas, primero se resuelve el tipo de CADA
+    //    línea y se arma el conjunto de tipos que realmente se van a necesitar; si son 1
+    //    o 2, se marcan TODOS de una vez al principio y ya no se vuelven a tocar.
     const TIPOS_CC = ['Departamentos', 'Sucursales', 'Planta'];
     const ccItems = parseNameAmountList(data.centroCostos);
     const resueltos = [];
@@ -676,6 +782,7 @@
           await selectDropdownOption('Tipo Centro costos', tipo); // marcar
           await sleep(300);
           const panel = await openFieldPanel('Centro costos');
+          if (panel) await waitForStableOptions(panel);
           const opciones = panel
             ? Array.from(panel.querySelectorAll('li')).map((li) => li.textContent.trim())
             : [];
@@ -691,88 +798,177 @@
         await sleep(200);
       }
 
-      // 8b. Para cada línea, ver en cuántos tipos aparece su nombre, y agregarla.
-      //     v2.3 (bug real, visto en vivo): dejar "Tipo Centro costos" en CERO tipos
-      //     marcados —como hacía v2.2 al desmarcar después de cada línea— hace que
-      //     Qintek BORRE todo lo que hubiera en "Centro costos" (el campo depende de
-      //     tener al menos un tipo activo para saber qué opciones siguen siendo
-      //     válidas). Por eso ahora solo se toca "Tipo Centro costos" cuando la
-      //     siguiente línea de verdad necesita un tipo distinto al actual —nunca entre
-      //     líneas del mismo tipo—, y el cambio se hace marcando el tipo nuevo ANTES de
-      //     desmarcar el anterior, para no pasar nunca por "cero tipos marcados" a
-      //     media ejecución. Al terminar, se deja marcado el último tipo usado (no se
-      //     limpia), que es como queda visible el resultado final en el formulario.
-      //     Nota: si una misma orden mezcla Centro de Costos de los 3 tipos a la vez
-      //     (Departamentos + Sucursales + Planta), los del primer tipo usado se pueden
-      //     perder al cambiar al último tipo (ver LÍMITES CONOCIDOS) — revisa el
-      //     resultado final antes de guardar.
-      let tipoActual = null;
+      // 8b. Resolver a qué tipo pertenece cada línea ANTES de tocar nada en el
+      //     formulario (esto es lo nuevo en v2.5 — antes se resolvía y se marcaba al
+      //     mismo tiempo, línea por línea, lo que forzaba cambios de tipo a media
+      //     ejecución cada vez que el Excel alternaba entre tipos).
+      // v2.8 (bug real, visto en vivo — la regla de "preferir Planta" de v2.7 podía
+      // arruinar TODO el lote): si un lote solo necesitaba 2 tipos (ej. Departamentos +
+      // Sucursales, el caso seguro) y una línea ambigua se resolvía a Planta a la
+      // fuerza, el lote pasaba a necesitar 3 tipos — y ahí sí aplica la limitación
+      // grave de Qintek (cada cambio de tipo borra lo ya agregado del tipo que se
+      // desmarca), arriesgando TODAS las líneas, no solo la ambigua. Ahora la
+      // resolución se hace en dos pasadas: primero las líneas sin ambigüedad (que
+      // determinan qué tipos ya son necesarios de todos modos), y después las
+      // ambiguas, evitando siempre que sea posible abrir un tercer tipo.
+      const itemsConTipo = [];
+      const ambiguos = [];
       for (const item of ccItems) {
-        const norm = item.nombre.toLowerCase();
         const tiposConMatch = TIPOS_CC.filter((tipo) =>
           (catalogoPorTipo[tipo] || []).some(
             (opt) => opt.toLowerCase() === `${item.nombre} (${tipo})`.toLowerCase()
           )
         );
-
         if (tiposConMatch.length === 1) {
-          const tipo = tiposConMatch[0];
-          try {
-            if (tipoActual !== tipo) {
-              await selectDropdownOption('Tipo Centro costos', tipo); // marcar el nuevo primero
+          itemsConTipo.push({ ...item, tipo: tiposConMatch[0] });
+        } else if (tiposConMatch.length > 1) {
+          ambiguos.push({ item, tiposConMatch });
+        } else {
+          warn(`No encontré "${item.nombre}" en Departamentos, Sucursales ni Planta.`);
+        }
+      }
+
+      const tiposBase = new Set(itemsConTipo.map((i) => i.tipo));
+      for (const { item, tiposConMatch } of ambiguos) {
+        // Regla acordada con el usuario (v2.7): si "Planta" es una opción, preferirla.
+        // Pero (v2.8) solo cuando NO implique abrir un tercer tipo en el lote: si ya se
+        // necesitan 2 tipos distintos que no incluyen Planta, forzar Planta aquí
+        // pondría en riesgo TODAS las líneas del lote (no solo esta), así que en ese
+        // caso se usa en su lugar el otro tipo de la ambigüedad si ya era necesario, o
+        // se deja para agregar a mano si ni siquiera eso evita abrir un tercer tipo.
+        const abrirPlantaEsSeguro = tiposBase.has('Planta') || tiposBase.size < 2;
+        if (tiposConMatch.includes('Planta') && abrirPlantaEsSeguro) {
+          itemsConTipo.push({ ...item, tipo: 'Planta' });
+          tiposBase.add('Planta');
+          warn(
+            `Centro de Costos "${item.nombre}" existe en más de un tipo ` +
+              `(${tiposConMatch.join(', ')}) — se usó "Planta" por regla acordada.`
+          );
+          continue;
+        }
+        const alternativaSegura = tiposConMatch.find((t) => tiposBase.has(t));
+        if (alternativaSegura) {
+          itemsConTipo.push({ ...item, tipo: alternativaSegura });
+          warn(
+            `Centro de Costos "${item.nombre}" existe en más de un tipo ` +
+              `(${tiposConMatch.join(', ')}) — se usó "${alternativaSegura}" en vez de ` +
+              `Planta, para no abrir un tercer tipo en este lote (arriesgaría el resto ` +
+              `de las líneas). Verifica si en este caso debía ser Planta.`
+          );
+        } else {
+          warn(
+            `Centro de Costos "${item.nombre}" existe en más de un tipo ` +
+              `(${tiposConMatch.join(', ')}). Agrégalo manualmente (usar cualquiera de ` +
+              `estas opciones aquí abriría un tercer tipo y pondría en riesgo el resto ` +
+              `del lote).`
+          );
+        }
+      }
+
+      const tiposNecesarios = [...new Set(itemsConTipo.map((i) => i.tipo))];
+
+      // v2.6 (bug real, visto en vivo — se perdían los montos de las primeras líneas
+      // agregadas cuando había muchas): antes se agregaban TODAS las líneas de Centro
+      // de Costos primero y hasta el final se recorría `resueltos` para llenar los
+      // montos uno por uno. Con órdenes de muchas líneas (11+), los montos de las
+      // primeras que se habían agregado ya no se encontraban ("no encontré el campo de
+      // monto") — lo más probable es que la lista de filas en pantalla no mantenga
+      // renderizadas todas las filas ya agregadas a la vez. Ahora cada línea se agrega
+      // Y se le llena el monto de inmediato, uno tras otro, mientras su fila está
+      // garantizada en el DOM recién creada.
+      const agregarItem = async (item) => {
+        try {
+          const panel = await openFieldPanel('Centro costos');
+          if (!panel) throw new Error('no abrió el panel');
+          await waitForStableOptions(panel);
+          const options = Array.from(panel.querySelectorAll('li'));
+          const norm = item.nombre.toLowerCase();
+          const match = options.find(
+            (li) => li.textContent.trim().toLowerCase() === norm + ` (${item.tipo})`.toLowerCase()
+          );
+          if (match) {
+            match.click();
+            // v2.4: se guarda también el texto EXACTO de la fila (con sufijo de tipo,
+            // ej. "Centro (Sucursales)") para poder ubicar su input de monto sin
+            // ambigüedad más adelante.
+            const etiqueta = match.textContent.trim();
+            document.body.click();
+            purgeStalePanels();
+            await sleep(250);
+            const input = findRowAmountInput(etiqueta);
+            if (input) {
+              setAngularInputValue(input, String(item.monto));
+              resueltos.push({ ...item, etiqueta });
+              ok(`Centro de Costos agregado: ${etiqueta} — $${item.monto}`);
+            } else {
+              resueltos.push({ ...item, etiqueta });
+              warn(`Centro de Costos "${etiqueta}" se agregó pero no encontré su campo de monto.`);
+            }
+          } else {
+            warn(`No volví a encontrar "${item.nombre}" al reabrir el catálogo de ${item.tipo}.`);
+            document.body.click();
+            purgeStalePanels();
+          }
+        } catch (e) {
+          err(`Centro de Costos "${item.nombre}": ${e.message}`);
+        }
+        await sleep(200);
+      };
+
+      if (tiposNecesarios.length <= 2) {
+        // Caso normal (aunque sean muchas líneas alternando entre los 2 tipos): se
+        // marcan de una sola vez los tipos que se van a necesitar y ya NO se vuelven a
+        // tocar durante el resto del proceso, así nunca se dispara el borrado de Qintek
+        // por cambio de tipo.
+        for (const tipo of tiposNecesarios) {
+          await selectDropdownOption('Tipo Centro costos', tipo);
+          await sleep(300);
+        }
+        for (const item of itemsConTipo) {
+          await agregarItem(item);
+        }
+      } else {
+        // Caso raro: se necesitan los 3 tipos a la vez. Marcarlos los 3 juntos
+        // dispara el comportamiento especial "-TODOS-" de Qintek (selecciona solo
+        // todos los centros de costo del catálogo), así que aquí sí hay que ir
+        // cambiando de tipo sobre la marcha — con la limitación conocida de que el
+        // primer tipo procesado puede perderse al llegar al último (ver LÍMITES
+        // CONOCIDOS). Se avisa explícitamente antes de empezar.
+        warn(
+          'Esta orden necesita los 3 tipos de Centro de Costos a la vez ' +
+            '(Departamentos + Sucursales + Planta). Por una limitación conocida de ' +
+            'Qintek, es posible que se pierdan los del primer tipo procesado — revisa ' +
+            'el formulario completo antes de guardar.'
+        );
+        let tipoActual = null;
+        for (const item of itemsConTipo) {
+          if (tipoActual !== item.tipo) {
+            try {
+              await selectDropdownOption('Tipo Centro costos', item.tipo); // marcar el nuevo primero
               await sleep(300);
               if (tipoActual) {
                 await selectDropdownOption('Tipo Centro costos', tipoActual); // desmarcar el anterior después
                 await sleep(300);
               }
-              tipoActual = tipo;
+              tipoActual = item.tipo;
+            } catch (e) {
+              err(`Centro de Costos "${item.nombre}": ${e.message}`);
+              continue;
             }
-            const panel = await openFieldPanel('Centro costos');
-            if (!panel) throw new Error('no abrió el panel');
-            const options = Array.from(panel.querySelectorAll('li'));
-            const match = options.find((li) => li.textContent.trim().toLowerCase() === norm + ` (${tipo})`.toLowerCase());
-            if (match) {
-              match.click();
-              // v2.4: se guarda también el texto EXACTO de la fila (con sufijo de
-              // tipo, ej. "Centro (Sucursales)") para poder ubicar su input de monto
-              // sin ambigüedad más adelante.
-              resueltos.push({ ...item, etiqueta: match.textContent.trim() });
-              ok(`Centro de Costos agregado: ${match.textContent.trim()}`);
-            } else {
-              warn(`No volví a encontrar "${item.nombre}" al reabrir el catálogo de ${tipo}.`);
-            }
-            document.body.click();
-            purgeStalePanels();
-          } catch (e) {
-            err(`Centro de Costos "${item.nombre}": ${e.message}`);
           }
-        } else if (tiposConMatch.length > 1) {
-          warn(
-            `Centro de Costos "${item.nombre}" existe en más de un tipo ` +
-              `(${tiposConMatch.join(', ')}). Agrégalo manualmente.`
-          );
-        } else {
-          warn(`No encontré "${item.nombre}" en Departamentos, Sucursales ni Planta.`);
+          await agregarItem(item);
         }
-        await sleep(200);
       }
     }
-    // v2.3: a propósito NO se desmarca "Tipo Centro costos" aquí — hacerlo borraría
-    // todo lo que se acaba de seleccionar en "Centro costos" (ver nota arriba). Se deja
-    // el último tipo usado marcado, que es el estado correcto para ver el resultado.
+    // A propósito NO se desmarca "Tipo Centro costos" aquí — hacerlo borraría todo lo
+    // que se acaba de seleccionar en "Centro costos". Se dejan marcados los tipos
+    // usados, que es el estado correcto para ver el resultado.
     document.body.click();
     purgeStalePanels();
     await sleep(300);
 
-    for (const item of resueltos) {
-      const input = findRowAmountInput(item.etiqueta || item.nombre);
-      if (input) {
-        setAngularInputValue(input, String(item.monto));
-        ok(`Monto Centro de Costos "${item.nombre}": $${item.monto}`);
-      } else {
-        warn(`No encontré el campo de monto para "${item.nombre}".`);
-      }
-    }
+    // v2.6: el monto de cada Centro de Costos ya se llenó en el momento (ver
+    // `agregarItem` arriba) — ya no se rellena aquí al final por lote.
 
     // 9. Folio de Factura — normalmente ya lo llenó Qintek con el XML.
     if (!isPlainInputEmpty('Folio de Factura')) {
