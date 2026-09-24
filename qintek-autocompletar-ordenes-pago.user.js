@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Qintek - Autocompletar Orden de Pago (Duplicar)
 // @namespace    qintek-pmo-automation
-// @version      2.8
+// @version      2.9
 // @description  Completa SOLO los campos que falten en Captura > Órdenes de pago de Qintek, después de que subas el XML de la factura. Busca la orden a clonar por número de folio dentro del Excel que pegues. Nunca presiona "Guardar".
 // @match        https://qintek.qin.mx/crud/capturar/ordenesdepago*
 // @grant        GM_registerMenuCommand
@@ -272,6 +272,17 @@
     (evitando el riesgo por completo), o —si ni eso alcanza— lo deja para agregarse a
     mano, avisando explícitamente que se evitó a propósito para no arriesgar el resto
     del lote.
+
+  CAMBIOS v2.9 (mejora pedida por el usuario)
+  - El panel ahora se puede arrastrar y soltar en cualquier parte de la pantalla de
+    Qintek: da clic sostenido sobre el encabezado naranja (donde dice "Panel de
+    Clonado de Orden de Pago", NO sobre el botón ▁ de colapsar) y arrástralo a donde
+    quieras. Se queda dentro de los límites de la ventana (siempre puedes volver a
+    agarrarlo, aunque lo sueltes cerca de una orilla).
+  - La última posición donde soltaste el panel se recuerda mientras la pestaña siga
+    abierta: si Qintek destruye y vuelve a crear el panel al navegar dentro de la
+    aplicación (ver CAMBIOS v2.1), reaparece donde lo dejaste en vez de saltar de
+    vuelta a la esquina superior derecha por defecto.
 */
 
 (function () {
@@ -1076,6 +1087,47 @@
       .join('');
   }
 
+  // NUEVO v2.9: el panel se puede reposicionar arrastrándolo desde su encabezado
+  // naranja. `panelPos` recuerda la última posición donde se soltó, para que si
+  // Qintek llega a destruir y recrear el panel (navegación dentro de la SPA — ver
+  // v2.1) reaparezca donde el usuario lo dejó, en vez de saltar de vuelta a la
+  // esquina superior derecha por defecto. El seguimiento del arrastre (mousemove /
+  // mouseup) se registra UNA sola vez a nivel de documento (no dentro de
+  // createPanel) para no ir acumulando listeners cada vez que el panel se recrea.
+  let panelPos = null;
+  let dragState = null;
+
+  function onPanelDragMove(e) {
+    if (!dragState) return;
+    const panel = document.getElementById('qintek-autofill-panel');
+    if (!panel) {
+      dragState = null;
+      return;
+    }
+    const dx = e.clientX - dragState.startX;
+    const dy = e.clientY - dragState.startY;
+    const margin = 40; // deja siempre una parte del panel visible/agarrable
+    let newLeft = dragState.startLeft + dx;
+    let newTop = dragState.startTop + dy;
+    newLeft = Math.min(Math.max(newLeft, margin - panel.offsetWidth), window.innerWidth - margin);
+    newTop = Math.min(Math.max(newTop, 0), window.innerHeight - margin);
+    panel.style.left = `${newLeft}px`;
+    panel.style.top = `${newTop}px`;
+  }
+
+  function onPanelDragEnd() {
+    if (!dragState) return;
+    dragState = null;
+    const panel = document.getElementById('qintek-autofill-panel');
+    if (!panel) return;
+    const header = panel.querySelector('#qaf-header');
+    if (header) header.style.cursor = 'move';
+    panelPos = { left: parseInt(panel.style.left, 10) || 0, top: parseInt(panel.style.top, 10) || 0 };
+  }
+
+  document.addEventListener('mousemove', onPanelDragMove);
+  document.addEventListener('mouseup', onPanelDragEnd);
+
   function createPanel() {
     if (document.getElementById('qintek-autofill-panel')) return;
 
@@ -1086,8 +1138,14 @@
       background: #fff; border: 2px solid #f57c00; border-radius: 8px;
       box-shadow: 0 4px 16px rgba(0,0,0,0.25); font-family: Arial, sans-serif; font-size: 13px;
     `;
+    if (panelPos) {
+      // Reaparecer donde el usuario lo dejó la última vez, en vez de la esquina por defecto.
+      panel.style.top = `${panelPos.top}px`;
+      panel.style.left = `${panelPos.left}px`;
+      panel.style.right = 'auto';
+    }
     panel.innerHTML = `
-      <div style="background:#f57c00; color:#fff; padding:8px 12px; border-radius:6px 6px 0 0; display:flex; justify-content:space-between; align-items:center; cursor:default;">
+      <div id="qaf-header" style="background:#f57c00; color:#fff; padding:8px 12px; border-radius:6px 6px 0 0; display:flex; justify-content:space-between; align-items:center; cursor:move; user-select:none;">
         <strong>Panel de Clonado de Orden de Pago</strong>
         <span id="qaf-toggle" style="cursor:pointer; padding:0 4px;">▁</span>
       </div>
@@ -1118,6 +1176,22 @@
       </div>
     `;
     document.body.appendChild(panel);
+
+    // NUEVO v2.9: arrastrar el panel desde su encabezado para reposicionarlo en
+    // cualquier parte de la pantalla de Qintek.
+    const header = document.getElementById('qaf-header');
+    header.addEventListener('mousedown', (e) => {
+      if (e.target.id === 'qaf-toggle') return; // no arrastrar al colapsar/expandir
+      const rect = panel.getBoundingClientRect();
+      // Al empezar a arrastrar se deja de anclar por "right" y se fija por "left",
+      // para que el movimiento sea consistente sin importar cómo se posicionó antes.
+      panel.style.right = 'auto';
+      panel.style.left = `${rect.left}px`;
+      panel.style.top = `${rect.top}px`;
+      dragState = { startX: e.clientX, startY: e.clientY, startLeft: rect.left, startTop: rect.top };
+      header.style.cursor = 'grabbing';
+      e.preventDefault();
+    });
 
     document.getElementById('qaf-toggle').addEventListener('click', () => {
       const body = document.getElementById('qaf-body');
