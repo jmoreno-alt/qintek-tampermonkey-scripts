@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Qintek - Autocompletar Orden de Pago (Duplicar)
 // @namespace    qintek-pmo-automation
-// @version      2.9
+// @version      2.10
 // @description  Completa SOLO los campos que falten en Captura > Órdenes de pago de Qintek, después de que subas el XML de la factura. Busca la orden a clonar por número de folio dentro del Excel que pegues. Nunca presiona "Guardar".
 // @match        https://qintek.qin.mx/crud/capturar/ordenesdepago*
 // @grant        GM_registerMenuCommand
@@ -283,10 +283,22 @@
     abierta: si Qintek destruye y vuelve a crear el panel al navegar dentro de la
     aplicación (ver CAMBIOS v2.1), reaparece donde lo dejaste en vez de saltar de
     vuelta a la esquina superior derecha por defecto.
+
+  CAMBIOS v2.10 (mejora pedida por el usuario)
+  - Se agregó el número de versión al pie del panel (debajo de la advertencia de
+    "nunca presiona Guardar"), para que cualquiera que lo vea sepa de inmediato qué
+    versión tiene instalada, sin necesidad de abrir el Dashboard de Tampermonkey —
+    útil ahora que varios colegas van a usar el script en distintos navegadores.
 */
 
 (function () {
   'use strict';
+
+  // NUEVO v2.10: se muestra al pie del panel para que cualquiera que lo vea (tú o un
+  // colega) sepa de inmediato qué versión tiene instalada, sin tener que abrir
+  // Tampermonkey. Debe coincidir siempre con el "@version" del encabezado de arriba —
+  // acuérdate de actualizar los dos juntos en cada cambio.
+  const SCRIPT_VERSION = '2.10';
 
   // ---------------------------------------------------------------------
   // Utilidades de bajo nivel para manipular el formulario Angular/PrimeNG
@@ -1173,6 +1185,7 @@
         <div style="margin-top:8px; font-size:11px; color:#b00020; font-weight:bold;">
           ⚠ Este script NUNCA presiona "Guardar". Revisa todo y guarda tú mismo.
         </div>
+        <div style="margin-top:6px; font-size:10px; color:#999; text-align:right;">v${SCRIPT_VERSION}</div>
       </div>
     `;
     document.body.appendChild(panel);
