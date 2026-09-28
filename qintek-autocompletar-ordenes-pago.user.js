@@ -1,10 +1,12 @@
 // ==UserScript==
 // @name         Qintek - Autocompletar Orden de Pago (Duplicar)
 // @namespace    qintek-pmo-automation
-// @version      2.10
+// @version      2.11
 // @description  Completa SOLO los campos que falten en Captura > Órdenes de pago de Qintek, después de que subas el XML de la factura. Busca la orden a clonar por número de folio dentro del Excel que pegues. Nunca presiona "Guardar".
 // @match        https://qintek.qin.mx/crud/capturar/ordenesdepago*
 // @grant        GM_registerMenuCommand
+// @grant        GM_xmlhttpRequest
+// @connect      raw.githubusercontent.com
 // @updateURL    https://raw.githubusercontent.com/jmoreno-alt/qintek-tampermonkey-scripts/main/qintek-autocompletar-ordenes-pago.user.js
 // @downloadURL  https://raw.githubusercontent.com/jmoreno-alt/qintek-tampermonkey-scripts/main/qintek-autocompletar-ordenes-pago.user.js
 // ==/UserScript==
@@ -289,6 +291,32 @@
     "nunca presiona Guardar"), para que cualquiera que lo vea sepa de inmediato qué
     versión tiene instalada, sin necesidad de abrir el Dashboard de Tampermonkey —
     útil ahora que varios colegas van a usar el script en distintos navegadores.
+
+  CAMBIOS v2.11 (mejora pedida por el usuario — aviso de nueva versión dentro del panel)
+  - IMPORTANTE, para que quede claro qué SÍ y qué NO hace esto: un userscript no tiene
+    forma de ordenarle a la extensión Tampermonkey que se autoactualice sola sin que la
+    persona confirme nada — el navegador lo bloquea a propósito (si un script pudiera
+    reescribirse solo, cualquier script malicioso podría hacer lo mismo). Esto NO es una
+    actualización 100% automática y silenciosa; es un aviso dentro del panel más un
+    acceso directo de un clic para que la actualización real (que sigue haciendo
+    Tampermonkey) requiera lo menos posible de la persona.
+  - Ahora, cada vez que la página carga de verdad (una sola vez por carga, no en cada
+    segundo que se revisa si el panel sigue en pantalla), el script consulta en segundo
+    plano el archivo del script en GitHub (el mismo que usa @updateURL) y compara su
+    número de "@version" contra el de la copia instalada.
+  - Si la de GitHub es más nueva, aparece un aviso naranja claro dentro del panel, junto
+    al número de versión del pie, con un enlace "Clic aquí para actualizar". Ese enlace
+    abre el archivo .user.js directamente — y en cuanto Tampermonkey detecta que estás
+    viendo un .user.js de un script que ya tienes instalado (mismo nombre/namespace),
+    muestra solo su propio diálogo de "Reinstalar/Actualizar" para confirmar con un
+    clic. Si no hay versión más nueva, o si por cualquier motivo no se pudo consultar
+    GitHub (sin internet, GitHub caído, etc.), el panel se ve exactamente igual que
+    antes, sin ningún aviso.
+  - Requiere dos líneas nuevas en el encabezado del script: "@grant GM_xmlhttpRequest"
+    (para poder consultar GitHub sin toparse con el bloqueo de CORS del navegador) y
+    "@connect raw.githubusercontent.com" (para autorizar explícitamente ese destino).
+    Si alguna vez Tampermonkey pregunta si confías en este dominio para este script,
+    hay que aceptar para que el aviso de nueva versión funcione.
 */
 
 (function () {
@@ -298,7 +326,13 @@
   // colega) sepa de inmediato qué versión tiene instalada, sin tener que abrir
   // Tampermonkey. Debe coincidir siempre con el "@version" del encabezado de arriba —
   // acuérdate de actualizar los dos juntos en cada cambio.
-  const SCRIPT_VERSION = '2.10';
+  const SCRIPT_VERSION = '2.11';
+
+  // NUEVO v2.11: misma URL que "@updateURL"/"@downloadURL" de arriba — se usa para
+  // consultar en segundo plano si hay una versión más nueva publicada en GitHub, y
+  // también como el enlace de un clic para abrir/actualizar el script si la hay.
+  const SCRIPT_RAW_URL =
+    'https://raw.githubusercontent.com/jmoreno-alt/qintek-tampermonkey-scripts/main/qintek-autocompletar-ordenes-pago.user.js';
 
   // ---------------------------------------------------------------------
   // Utilidades de bajo nivel para manipular el formulario Angular/PrimeNG
@@ -1085,6 +1119,67 @@
   }
 
   // ---------------------------------------------------------------------
+  // NUEVO v2.11: aviso de nueva versión dentro del panel (ver CAMBIOS v2.11 arriba
+  // para la explicación completa de qué sí y qué no hace esto).
+  // ---------------------------------------------------------------------
+
+  // Compara dos números de versión tipo "2.11" contra "2.9" (una comparación de
+  // texto normal diría que "2.9" es "mayor" que "2.11" porque "9" > "1" — aquí se
+  // comparan como números, parte por parte). Regresa >0 si `a` es más nueva que `b`.
+  function compareVersions(a, b) {
+    const partsA = a.split('.').map((n) => parseInt(n, 10) || 0);
+    const partsB = b.split('.').map((n) => parseInt(n, 10) || 0);
+    const len = Math.max(partsA.length, partsB.length);
+    for (let i = 0; i < len; i++) {
+      const diff = (partsA[i] || 0) - (partsB[i] || 0);
+      if (diff !== 0) return diff;
+    }
+    return 0;
+  }
+
+  // Se llena una sola vez, cuando (y si) la consulta a GitHub responde que hay una
+  // versión más nueva. `createPanel()` la lee cada vez que (re)crea el panel, por si
+  // la respuesta llegó antes o después de que el panel existiera.
+  let nuevaVersionDisponible = null; // { version } o null
+
+  function renderUpdateBanner() {
+    const banner = document.getElementById('qaf-update-banner');
+    if (!banner || !nuevaVersionDisponible) return;
+    banner.style.display = 'block';
+    banner.innerHTML =
+      `⬆ Hay una versión más nueva disponible (v${nuevaVersionDisponible.version}). ` +
+      `<a href="${SCRIPT_RAW_URL}" target="_blank" style="color:#8a4b00; font-weight:bold;">Clic aquí para actualizar</a> ` +
+      `(Tampermonkey te va a pedir confirmar).`;
+  }
+
+  // Consulta el script publicado en GitHub y compara su "@version" contra la copia
+  // instalada. Se llama UNA vez por carga real de la página (no en cada segundo que
+  // se revisa si el panel sigue en pantalla). Si algo falla (sin internet, GitHub
+  // caído, @connect no autorizado todavía, etc.) simplemente no aparece ningún aviso
+  // — nunca rompe ni bloquea el resto del script.
+  function checkForNewVersion() {
+    if (typeof GM_xmlhttpRequest !== 'function') return;
+    try {
+      GM_xmlhttpRequest({
+        method: 'GET',
+        url: `${SCRIPT_RAW_URL}?_=${Date.now()}`, // evita una copia vieja en caché
+        onload: (res) => {
+          const m = res.responseText.match(/@version\s+([\d.]+)/);
+          if (!m) return;
+          const remota = m[1];
+          if (compareVersions(remota, SCRIPT_VERSION) > 0) {
+            nuevaVersionDisponible = { version: remota };
+            renderUpdateBanner();
+          }
+        },
+        onerror: () => {},
+      });
+    } catch (e) {
+      // Silencioso a propósito: esto es un aviso de cortesía, no algo crítico.
+    }
+  }
+
+  // ---------------------------------------------------------------------
   // Panel flotante (interfaz)
   // ---------------------------------------------------------------------
 
@@ -1185,10 +1280,16 @@
         <div style="margin-top:8px; font-size:11px; color:#b00020; font-weight:bold;">
           ⚠ Este script NUNCA presiona "Guardar". Revisa todo y guarda tú mismo.
         </div>
+        <div id="qaf-update-banner" style="display:none; margin-top:8px; padding:6px 8px; background:#fff3e0; border:1px solid #f57c00; border-radius:4px; font-size:11px; color:#8a4b00;"></div>
         <div style="margin-top:6px; font-size:10px; color:#999; text-align:right;">v${SCRIPT_VERSION}</div>
       </div>
     `;
     document.body.appendChild(panel);
+
+    // NUEVO v2.11: si la consulta a GitHub ya había respondido (o responde más tarde)
+    // que hay una versión más nueva, mostrar el aviso también cuando el panel se
+    // recrea (por ejemplo tras navegar dentro de Qintek — ver CAMBIOS v2.1).
+    renderUpdateBanner();
 
     // NUEVO v2.9: arrastrar el panel desde su encabezado para reposicionarlo en
     // cualquier parte de la pantalla de Qintek.
@@ -1266,6 +1367,10 @@
       }
     });
   }
+
+  // NUEVO v2.11: se consulta GitHub UNA sola vez por carga real de la página (no en
+  // cada segundo del setInterval de abajo, que solo reintenta crear el panel).
+  checkForNewVersion();
 
   // Espera a que el formulario Angular esté renderizado antes de inyectar el panel.
   // NUEVO v2.1: ya NO se detiene tras la primera vez. En una app Angular como Qintek,
