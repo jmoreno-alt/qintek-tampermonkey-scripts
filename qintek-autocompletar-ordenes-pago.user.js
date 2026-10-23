@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Qintek - Autocompletar Orden de Pago (Duplicar)
 // @namespace    qintek-pmo-automation
-// @version      2.11
+// @version      2.13
 // @description  Completa SOLO los campos que falten en Captura > Órdenes de pago de Qintek, después de que subas el XML de la factura. Busca la orden a clonar por número de folio dentro del Excel que pegues. Nunca presiona "Guardar".
 // @match        https://qintek.qin.mx/crud/capturar/ordenesdepago*
 // @grant        GM_registerMenuCommand
@@ -317,6 +317,22 @@
     "@connect raw.githubusercontent.com" (para autorizar explícitamente ese destino).
     Si alguna vez Tampermonkey pregunta si confías en este dominio para este script,
     hay que aceptar para que el aviso de nueva versión funcione.
+
+  CAMBIOS v2.12 (bug real reportado por el usuario — búsqueda de Proveedor)
+  - El Excel trae el Proveedor con un número de ID antes del nombre (ej.
+    "1234-NOMBRE DEL PROVEEDOR"), pero el catálogo de Qintek solo muestra el nombre.
+    El script buscaba el texto completo con el número incluido, por lo que no
+    encontraba al proveedor. Ahora se le quita el prefijo numérico ("1234-") antes de
+    buscarlo, igual que ya se hacía con Empresa Pagadora, Forma Pago y Tipo pago.
+  - Lo que se escribe a mano en el campo "Proveedor" del panel no se modifica (se
+    asume que ahí se escribe el nombre exacto tal cual está en Qintek).
+
+  CAMBIOS v2.13 (precisión sobre el formato del prefijo)
+  - El usuario aclaró que el número y el nombre del proveedor van separados por un
+    guion. La limpieza (stripPrefix) ya reconocía "1234-NOMBRE", pero ahora también
+    tolera espacios alrededor del guion ("1234 - NOMBRE") y al inicio del texto. Solo
+    se quita el primer guion tras el número inicial; los guiones que sean parte del
+    nombre del proveedor se conservan.
 */
 
 (function () {
@@ -326,7 +342,7 @@
   // colega) sepa de inmediato qué versión tiene instalada, sin tener que abrir
   // Tampermonkey. Debe coincidir siempre con el "@version" del encabezado de arriba —
   // acuérdate de actualizar los dos juntos en cada cambio.
-  const SCRIPT_VERSION = '2.11';
+  const SCRIPT_VERSION = '2.13';
 
   // NUEVO v2.11: misma URL que "@updateURL"/"@downloadURL" de arriba — se usa para
   // consultar en segundo plano si hay una versión más nueva publicada en GitHub, y
@@ -684,7 +700,11 @@
       .filter(Boolean);
   }
 
-  const stripPrefix = (v) => (v || '').replace(/^\d+-/, '').trim();
+  // v2.13: el prefijo es "número + guion + nombre" ("1234-NOMBRE"). Ahora también
+  // tolera espacios alrededor del guion ("1234 - NOMBRE", "1234- NOMBRE") y espacios
+  // al inicio, que son comunes al copiar desde Excel. Solo quita el PRIMER guion
+  // que sigue al número inicial; los guiones dentro del nombre se conservan.
+  const stripPrefix = (v) => (v || '').replace(/^\s*\d+\s*-\s*/, '').trim();
 
   // ---------------------------------------------------------------------
   // Flujo principal: completar SOLO lo que falte tras el XML de Qintek
@@ -1348,6 +1368,12 @@
         }
 
         const data = buildFieldMap(row);
+        // v2.12: el Excel trae el proveedor con un número de ID antes del nombre
+        // (ej. "1234-NOMBRE DEL PROVEEDOR"), pero en el catálogo de Qintek solo aparece
+        // el nombre. Se quita ese prefijo numérico, igual que ya se hacía con Empresa
+        // Pagadora, Forma Pago, etc. (Lo que se escriba a mano en el campo "Proveedor"
+        // del panel NO se toca: ahí se espera el nombre exacto tal cual está en Qintek.)
+        if (data.proveedor) data.proveedor = stripPrefix(data.proveedor);
         pre.push({
           level: 'info',
           msg: `Usando la orden con folio ${data.folioQintek || folioInput || '(sin folio)'} — ${stripPrefix(data.empresaPagadora || '') || 'empresa no especificada'}.`,
